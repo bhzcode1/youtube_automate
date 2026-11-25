@@ -137,6 +137,11 @@ class Run(Base):
         self.run_main(lambda *a: "V", "--max-uploads", "2")
         self.assertEqual([e["status"] for e in self.queue()], ["approved", "uploaded", "uploaded"])
 
+    def test_match_uploads_only_that_clip(self):
+        self.write([self.entry("old_high", 90), self.entry("new_kai", 60)])
+        self.run_main(lambda *a: "V", "--max-uploads", "1", "--match", "NEW_KAI")
+        self.assertEqual([e["status"] for e in self.queue()], ["approved", "uploaded"])
+
     def test_dry_run_touches_nothing(self):
         self.write([self.entry("a", 90)])
         client, one = self.run_main(lambda *a: "V", "--dry-run")
@@ -150,6 +155,29 @@ class Run(Base):
         _, one = self.run_main(lambda *a: "V")
         one.assert_not_called()
         self.assertEqual(self.queue()[0]["status"], "failed")
+
+
+class UploadPost(Base):
+    def test_status_check_network_error_keeps_waiting(self):
+        accepted = mock.Mock(status_code=200, json=lambda: {"success": True, "request_id": "r1"})
+        done = mock.Mock(json=lambda: {"results": {"youtube": {"success": True, "video_id": "VID"}}})
+        with mock.patch("requests.post", return_value=accepted), \
+                mock.patch("requests.get", side_effect=[ConnectionError("wifi"), done]), \
+                mock.patch.object(up.time, "sleep"):
+            self.assertEqual(up.upload_via_uploadpost(self.entry("a", 1), "public", "24", "k", "p"),
+                             ("VID", "r1"))
+
+    def test_ai_title_failure_does_not_block_the_queue(self):
+        up.UP_KEY.write_text("key", encoding="utf-8")   # -> Upload-Post path
+        added = {**self.entry("added", 1000), "yt_title": ""}
+        self.write([added, self.entry("b", 80)])
+        with mock.patch.object(up, "auto_title_description", side_effect=RuntimeError("no AI left")), \
+                mock.patch.object(up, "upload_via_uploadpost", return_value=("V", "r")) as send:
+            up.main(["--max-uploads", "1", "--profile", "p"])
+            send.assert_not_called()
+            self.assertEqual(self.queue()[0]["status"], "failed")
+            up.main(["--max-uploads", "1", "--profile", "p"])   # next run moves on to b
+        self.assertEqual([e["status"] for e in self.queue()], ["failed", "uploaded"])
 
 
 class SignIn(Base):

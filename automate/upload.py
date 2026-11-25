@@ -273,11 +273,12 @@ def upload_via_uploadpost(entry, privacy, category, key, profile):
             raise RuntimeError(f"Upload-Post status {status}: {json.dumps(j)[:400]}")
         time.sleep(15)
         log(f"  waiting for YouTube... ({(attempt + 1) * 15}s)")
-        s = requests.get(UP_STATUS, headers={"Authorization": f"Apikey {key}"},
-                         params={"request_id": rid}, timeout=60)
+        # Upload-Post already has the video: a failed status check must never make the
+        # caller treat it as unsent (that would post it again next run)
         try:
-            j = s.json()
-        except ValueError:
+            j = requests.get(UP_STATUS, headers={"Authorization": f"Apikey {key}"},
+                             params={"request_id": rid}, timeout=60).json()
+        except (OSError, ValueError):   # requests' errors are OSErrors
             j = {}
     return None, rid  # still processing; caller records it so it is never re-sent
 
@@ -322,6 +323,7 @@ def main(argv=None):
     p.add_argument("--category", default="24", help="YouTube category id (24 Entertainment, 20 Gaming)")
     p.add_argument("--add", metavar="VIDEO", help="add a video to the queue (title/description written by AI) and post it")
     p.add_argument("--language", default="English", help="language for AI titles")
+    p.add_argument("--match", help="only approved entries whose file path contains this text")
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--auth-only", action="store_true")
     args = p.parse_args(argv)
@@ -348,7 +350,8 @@ def main(argv=None):
                           "added_at": datetime.now().isoformat(timespec="seconds")})
             save_queue(queue)
             log(f"added to queue: {video}")
-    approved = [e for e in queue if e.get("status") == "approved"]
+    approved = [e for e in queue if e.get("status") == "approved"
+                and (not args.match or args.match.lower() in e.get("file", "").lower())]
     approved.sort(key=lambda e: e.get("score") or 0, reverse=True)
     todo = approved[: max(args.max_uploads, 0)]
 
@@ -390,8 +393,12 @@ def main(argv=None):
                     t, d = auto_title_description(entry, key, args.language)
                     entry.update(yt_title=t, yt_description=d)
                 except Exception as e:
+                    # mark failed: left "approved" at the top, it would block every later run
+                    entry.update(status="failed", error=f"AI title failed: {str(e)[:450]}")
                     log(f"  {e}")
-                    log("  not posting it without a good title; it stays in the queue for next time")
+                    log("  not posting it without a good title; marked failed (set it back to "
+                        "'approved' or give it a yt_title to retry)")
+                    save_queue(queue)
                     continue
             else:
                 entry.update(yt_title=title_from_filename(entry["file"]))

@@ -9,6 +9,8 @@ Environment (all optional):
     SC_SETTINGS       JSON object merged over ~/StreamClips/settings.json for this run only
     SC_COOKIES_FILE   Netscape cookies.txt passed to every yt-dlp call (--cookies FILE), for
                       when YouTube asks to sign in and the browser's cookies can't be read
+    SC_TITLE_BAR      1 = burn the white title card into each clip (default: off; the
+                      YouTube title already says it, and the card covers the video)
 
 "translate" turns non-English speech into English text (Whisper's built-in translation).
 """
@@ -28,12 +30,13 @@ sys.path.insert(0, str(scripts))
 os.environ["PATH"] = str(Path(sys.executable).parent) + os.pathsep + os.environ.get("PATH", "")
 
 import numpy as np  # noqa: E402
-from sc import cli, discover, listen, media, produce, settings  # noqa: E402
+from sc import cli, discover, listen, media, produce, settings, titlecard  # noqa: E402
 
 SCAN_TASK = os.environ.get("SC_SCAN_TASK", "transcribe")
 CAPTION_TASK = os.environ.get("SC_CAPTION_TASK", "transcribe")
 OVERRIDES = json.loads(os.environ.get("SC_SETTINGS") or "{}")
 COOKIES_FILE = os.environ.get("SC_COOKIES_FILE")
+TITLE_BAR = os.environ.get("SC_TITLE_BAR") == "1"
 
 _state = threading.local()   # set while a clip is being made, so we know which task applies
 
@@ -86,6 +89,13 @@ def ytdlp_args(url, cookies=None):
     return args
 
 
+def no_title_card(*args, **kwargs):
+    # produce.make catches ValueError and renders the clip without the title card
+    raise ValueError("turned off; set SC_TITLE_BAR=1 to burn it in")
+
+
+if not TITLE_BAR:
+    titlecard.render = no_title_card
 listen.transcribe = transcribe
 produce.make = make
 settings.load = load
