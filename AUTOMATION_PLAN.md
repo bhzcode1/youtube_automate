@@ -54,7 +54,7 @@ The script becomes two files that meet at one shared file. Each person can build
 **Final joint check:** run the scheduled task once and confirm a clip goes all the way from search to a private video in YouTube Studio.
 
 ## Things the user must do once (can't be automated)
-1. In Google Cloud Console: create a project, enable **YouTube Data API v3**, set up the OAuth consent screen (External, add the user's own account as a test user), create an OAuth client of type **Desktop app**, and download it as `automate/client_secret.json`.
+1. In Google Cloud Console: create a project, enable **YouTube Data API v3**, set up the OAuth consent screen (External, add the user's own account as a test user, then click **Publish app** so it is "In production": in "Testing" Google expires the sign-in after 7 days and the daily run stops), create an OAuth client of type **Desktop app**, and download it as `automate/client_secret.json`.
 2. Run the script once by hand and sign in with the channel's Google account.
 
 ## Limits that shape the design

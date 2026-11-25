@@ -49,3 +49,16 @@ test_*.py
 # Logs
 *.log
 logs/
+
+# Automation (secrets, channel token, run state)
+automate/client_secret.json
+automate/cookies.txt
+automate/scheduled_task.cmd
+automate/token.json.tmp
+automate/token.json
+automate/state.json
+automate/queue.json
+automate/rejected.json
+automate/run.log
+automate/*.tmp
+!automate/tests/test_*.py
