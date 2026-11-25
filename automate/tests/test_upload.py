@@ -111,6 +111,19 @@ class Run(Base):
         self.assertIn("invalidTitle", q[0]["error"])
         self.assertEqual((q[1]["status"], q[1]["video_id"]), ("uploaded", "V2"))
 
+    def test_exit_code(self):
+        def fail(*a):
+            raise FakeHttpError(400, b"invalidTitle")
+        self.write([self.entry("a", 90)])
+        with mock.patch.object(up, "get_youtube", return_value="yt"), \
+                mock.patch.object(up, "upload_one", side_effect=fail):
+            self.assertEqual(up.main([]), 1)          # everything failed
+        self.write([self.entry("b", 90), self.entry("c", 80)])
+        with mock.patch.object(up, "get_youtube", return_value="yt"), \
+                mock.patch.object(up, "upload_one", side_effect=[FakeHttpError(400), "V"]):
+            self.assertEqual(up.main([]), 0)          # one went up
+        self.assertEqual(up.main([]), 0)              # nothing to do
+
     def test_quota_and_offline_stop_and_keep_rest_approved(self):
         for exc in (FakeHttpError(403, b'{"reason": "quotaExceeded"}'),
                     ServerNotFoundError("Unable to find the server"),

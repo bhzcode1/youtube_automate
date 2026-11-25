@@ -490,7 +490,7 @@ def main():
         group = [u for u in urls if langs[u] == lang]
         folders += make_clips(sc, group, opts.topic, opts.keywords, opts.clips, opts.model, lang,
                               opts.section, opts.repick, opts.cookies)
-    queue, rejected = read_json(QUEUE, []), read_json(REJECTED, [])
+    rejected = read_json(REJECTED, [])
 
     # Streams that gave no clips are recorded too, so the next run doesn't redo them.
     produced = {(read_json(f / "clips.json", {}).get("source") or {}).get("url") for f in folders}
@@ -530,8 +530,13 @@ def review_folders(folders, topic, model):
                     "added": datetime.datetime.now().isoformat(timespec="seconds")}
             if verdict.get("ok"):
                 title, desc, tags = youtube_fields(verdict, entry, source)
+                # re-read first: upload.py may have marked clips "uploaded" during this
+                # (minutes-long) review; writing our old copy back would re-upload them.
+                # Unreadable right now -> our copy, never [] (that would wipe the queue).
+                queue = read_json(QUEUE, queue)
                 queue.append({**base, "yt_title": title, "yt_description": desc, "tags": tags,
                               "status": "approved"})
+                write_json(QUEUE, queue)
                 approved += 1
                 log(f"approved [{entry.get('score')}] {entry['file']}: {title}")
             else:
@@ -539,8 +544,7 @@ def review_folders(folders, topic, model):
                                  "reason": verdict.get("reason", "")})
                 log(f"rejected [{entry.get('score')}] {entry['file']}: {verdict.get('reason')}")
             seen_files.add(path)
-            write_json(QUEUE, queue)
-            write_json(REJECTED, rejected)
+            write_json(REJECTED, rejected)   # only make_clips writes this file
     log(f"done: {approved} clip(s) approved -> {QUEUE}")
     return approved
 

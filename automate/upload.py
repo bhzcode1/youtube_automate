@@ -337,7 +337,7 @@ def main(argv=None):
     if args.auth_only:
         get_youtube()
         log(f"Sign-in saved to {TOKEN}")
-        return
+        return 0
 
     via = args.via or ("upload-post" if UP_KEY.exists() else "youtube")
     privacy = args.privacy or ("public" if via == "upload-post" else "private")
@@ -363,12 +363,12 @@ def main(argv=None):
 
     log(f"queue: {len(queue)} entries, {len(approved)} approved, uploading {len(todo)} ({privacy}, via {via})")
     if not todo:
-        return
+        return 0
 
     if args.dry_run:
         for e in todo:
             log(f"  would upload [{e.get('score')}] {clean_title(e.get('yt_title'))}  <- {e.get('file')}")
-        return
+        return 0
 
     youtube = key = profile = None
     if via == "youtube":
@@ -384,13 +384,14 @@ def main(argv=None):
             log(f"Missing profile name. Put your Upload-Post profile name in {UP_PROFILE}")
             sys.exit(2)
 
-    done = 0
+    done = failed = 0
     for entry in todo:
         title = clean_title(entry.get("yt_title"))
         if not Path(entry.get("file", "")).is_file():
             entry.update(status="failed", error=f"file not found: {entry.get('file')}")
             log(f"FAILED (missing file) {title}")
             save_queue(queue)
+            failed += 1
             continue
         if not (entry.get("yt_title") or "").strip():
             if key:
@@ -405,6 +406,7 @@ def main(argv=None):
                     log("  not posting it without a good title; marked failed (set it back to "
                         "'approved' or give it a yt_title to retry)")
                     save_queue(queue)
+                    failed += 1
                     continue
             else:
                 entry.update(yt_title=title_from_filename(entry["file"]))
@@ -425,6 +427,7 @@ def main(argv=None):
             entry.update(status="failed", error=str(e)[:500])
             log(f"FAILED {title}: {e}")
             save_queue(queue)
+            failed += 1
             continue
         entry.update(status="uploaded", video_id=video_id, via=via, privacy=privacy,
                      uploaded_at=datetime.now().isoformat(timespec="seconds"))
@@ -440,8 +443,10 @@ def main(argv=None):
         else:
             log(f"done: https://youtube.com/shorts/{video_id}")
 
-    log(f"finished: {done} uploaded")
+    log(f"finished: {done} uploaded, {failed} failed")
+    # run_daily and Task Scheduler only see this code: 1 = nothing went up, something failed
+    return 1 if failed and not done else 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

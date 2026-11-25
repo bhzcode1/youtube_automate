@@ -184,6 +184,18 @@ class ReviewFolders(TempFiles):
         self.assertTrue(queue[0]["file"].endswith("stream/01_a.mp4"))
         self.assertEqual([r["reason"] for r in rejected], ["cutscene"])
 
+    def test_upload_during_review_is_not_undone(self):
+        mc.write_json(mc.QUEUE, [{"file": "C:/old.mp4", "status": "approved"}])
+
+        def upload_meanwhile(entry, *_):   # upload.py finishes while Claude reviews clip 1
+            if entry["file"] == "01_a.mp4":
+                mc.write_json(mc.QUEUE, [{"file": "C:/old.mp4", "status": "uploaded"}])
+            return self.verdicts(entry)
+        with mock.patch.object(mc, "review", side_effect=upload_meanwhile):
+            mc.review_folders([self.folder], "t", "m")
+        queue = mc.read_json(mc.QUEUE, [])
+        self.assertEqual([e["status"] for e in queue], ["uploaded", "approved"])
+
     def test_second_run_reviews_nothing(self):
         with mock.patch.object(mc, "review", side_effect=self.verdicts):
             mc.review_folders([self.folder], "t", "m")
