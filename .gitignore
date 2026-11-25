@@ -1,64 +1,29 @@
 # Python
 __pycache__/
 *.py[cod]
-*$py.class
-*.so
-.Python
 venv/
-env/
-ENV/
-*.egg-info/
-.eggs/
-dist/
-build/
+.venv/
 
-# Environment
-.env
-.env.local
-.env.*.local
-
-# IDE
+# Editor / OS
 .vscode/
 .idea/
-*.swp
-*.swo
-*~
-
-# OS
 .DS_Store
 Thumbs.db
 Desktop.ini
 
-# Outputs
-youtube-clips/
-outputs/
-downloads/
-temp/
-tmp/
-
-# Test files
-*.mp4
-*.webm
-*.mkv
-*.avi
-*.vtt
-*.srt
-test_*.py
-*_test.py
-
-# Logs
-*.log
-logs/
-
-# Automation (secrets, channel token, run state)
+# Secrets: never commit these
+.env
 automate/client_secret.json
-automate/cookies.txt
-automate/scheduled_task.cmd
-automate/token.json.tmp
 automate/token.json
-automate/state.json
+automate/uploadpost_key.txt
+automate/uploadpost_profile.txt
+automate/cookies.txt
+
+# Local run state and output
 automate/queue.json
 automate/rejected.json
-automate/run.log
-automate/*.tmp
-!automate/tests/test_*.py
+automate/state.json
+automate/scheduled_task.cmd
+*.log
+*.tmp
+*.mp4

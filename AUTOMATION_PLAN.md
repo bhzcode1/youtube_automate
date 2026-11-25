@@ -1,5 +1,9 @@
 # Plan: fully automated topic → clips → YouTube upload
 
+> Original design, kept for the Person A / Person B split. Some names changed while building
+> (`run.py` → `run_daily.py`, `state.json` → `queue.json` + `rejected.json`, Upload-Post added).
+> `README.md` has the current setup and commands.
+
 ## Context
 The user wants the whole job automated with no human step: find streams for a topic, have Claude choose the streams and approve each clip, cut vertical 9:16 clips with English captions, and upload them to the user's YouTube channel.
 
