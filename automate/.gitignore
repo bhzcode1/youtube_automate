@@ -1,0 +1,12 @@
+# secrets - never upload these to GitHub
+client_secret.json
+token.json
+uploadpost_key.txt
+uploadpost_profile.txt
+
+# local data
+queue.json
+queue.json.tmp
+rejected.json
+run.log
+*.mp4

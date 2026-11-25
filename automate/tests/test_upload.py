@@ -24,35 +24,20 @@ class FakeHttpError(Exception):
         self.content = content
 
 
-class FakeRequest:
-    def __init__(self, steps):
-        self.steps = list(steps)   # each: Exception to raise, or a response dict / None
-
-    def next_chunk(self, num_retries=0):
-        assert num_retries == up.MAX_RETRIES   # retries are left to the library
-        step = self.steps.pop(0)
-        if isinstance(step, Exception):
-            raise step
-        return None, step
+class ServerNotFoundError(Exception):
+    """Like httplib2's DNS error: not an OSError, no HTTP status."""
 
 
-class FakeYouTube:
-    def __init__(self, steps):
-        self.steps, self.bodies = steps, []
-
-    def videos(self):
-        return self
-
-    def insert(self, part, body, media_body):
-        self.bodies.append(body)
-        return FakeRequest(self.steps)
+ServerNotFoundError.__module__ = "httplib2.error"
 
 
 class Base(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.tmp, True)
-        for name, file in {"QUEUE": "queue.json", "LOG": "run.log"}.items():
+        # no uploadpost_key.txt -> the own-API ("youtube") path, which the tests fake
+        for name, file in {"QUEUE": "queue.json", "LOG": "run.log", "UP_KEY": "no_key.txt",
+                           "TOKEN": "token.json", "CLIENT_SECRET": "client_secret.json"}.items():
             p = mock.patch.object(up, name, self.tmp / file)
             p.start()
             self.addCleanup(p.stop)
@@ -66,150 +51,137 @@ class Base(unittest.TestCase):
         return {"file": self.clip(name), "score": score, "status": status,
                 "yt_title": f"{name} #Shorts", "yt_description": "d", "tags": ["shorts"]}
 
+    def write(self, entries):
+        up.save_queue(entries)
+
     def queue(self):
         return json.loads(up.QUEUE.read_text(encoding="utf-8"))
 
-
-class Pending(Base):
-    def test_highest_score_first_and_limit(self):
-        q = [self.entry("a", 50), self.entry("b", 90), self.entry("c", 70),
-             self.entry("d", 99, "uploaded")]
-        self.assertEqual([Path(e["file"]).name for e in up.pending(q, 2)], ["b", "c"])
-        self.assertEqual(up.pending(q, 0), [])
-
-    def test_match_filter(self):
-        q = [self.entry("mrbeast", 90), self.entry("kai_wrong_gun", 60)]
-        self.assertEqual([Path(e["file"]).name for e in up.pending(q, 5, "KAI")], ["kai_wrong_gun"])
-        self.assertEqual(up.pending(q, 5, "nobody"), [])
-
-    def test_body(self):
-        e = self.entry("a", 1)
-        e["yt_title"] = "x" * 150
-        body = up.body_for(e, "unlisted")
-        self.assertEqual(len(body["snippet"]["title"]), 100)
-        self.assertEqual(body["snippet"]["categoryId"], "20")
-        self.assertEqual(body["status"], {"privacyStatus": "unlisted", "selfDeclaredMadeForKids": False})
+    def run_main(self, uploader, *argv):
+        """Run upload.main() with the YouTube client and upload_one faked."""
+        with mock.patch.object(up, "get_youtube", return_value="yt") as client, \
+                mock.patch.object(up, "upload_one", side_effect=uploader) as one:
+            up.main(list(argv))
+        return client, one
 
 
 class UploadOne(Base):
-    media = staticmethod(lambda path: path)
+    def test_library_does_the_retries(self):
+        request = mock.Mock()
+        request.next_chunk.side_effect = [(None, None), (None, {"id": "VID1"})]   # two chunks
+        yt = mock.Mock()
+        yt.videos.return_value.insert.return_value = request
+        with mock.patch("googleapiclient.http.MediaFileUpload"):
+            self.assertEqual(up.upload_one(yt, self.entry("a", 1), "private", "20"), "VID1")
+        request.next_chunk.assert_called_with(num_retries=up.MAX_RETRIES)
+        body = yt.videos.return_value.insert.call_args.kwargs["body"]
+        self.assertEqual(body["status"]["privacyStatus"], "private")
 
-    def test_success(self):
-        yt = FakeYouTube([None, {"id": "VID1"}])   # two chunks
-        self.assertEqual(up.upload_one(yt, self.entry("a", 1), "private", self.media), "VID1")
-        self.assertEqual(yt.bodies[0]["status"]["privacyStatus"], "private")
+    def test_clean_title(self):
+        self.assertEqual(up.clean_title("x" * 150), "x" * 100)
+        self.assertEqual(up.clean_title("<b>Hi</b>"), "bHi/b #Shorts")
 
-    def test_permanent_error_raised(self):
-        yt = FakeYouTube([FakeHttpError(400, b"invalidTitle")])
-        with self.assertRaises(FakeHttpError):
-            up.upload_one(yt, self.entry("a", 1), "private", self.media)
-
-    def test_quota(self):
-        yt = FakeYouTube([FakeHttpError(403, b'{"reason": "quotaExceeded"}')])
-        with self.assertRaises(up.StopRun):
-            up.upload_one(yt, self.entry("a", 1), "private", self.media)
-
-    def test_offline_stops_run(self):
-        class ServerNotFoundError(Exception):   # like httplib2's: not an OSError, no HTTP status
-            pass
-        yt = FakeYouTube([ServerNotFoundError("Unable to find the server at youtube.googleapis.com")])
-        with self.assertRaises(up.StopRun):
-            up.upload_one(yt, self.entry("a", 1), "private", self.media)
-
-    def test_missing_file(self):
-        e = self.entry("a", 1)
-        Path(e["file"]).unlink()
-        with self.assertRaises(FileNotFoundError):
-            up.upload_one(FakeYouTube([]), e, "private", self.media)
+    def test_find_youtube_result_nested(self):
+        self.assertEqual(up.find_youtube_result({"results": [{"youtube": {"success": True}}]}),
+                         {"success": True})
 
 
 class Run(Base):
-    def write(self, entries):
-        up.write_json(up.QUEUE, entries)
-
     def test_records_results_and_never_reuploads(self):
         self.write([self.entry("a", 90), self.entry("b", 80)])
         ids = iter(["V1", "V2"])
-        uploader = mock.Mock(side_effect=lambda yt, e, p: next(ids))
-        self.assertEqual(up.run(5, "private", client_factory=lambda: "yt", uploader=uploader), 0)
+        self.run_main(lambda yt, e, p, c: next(ids))
         q = self.queue()
         self.assertEqual([(e["status"], e["video_id"], e["privacy"]) for e in q],
                          [("uploaded", "V1", "private"), ("uploaded", "V2", "private")])
-        self.assertTrue(all("uploaded_at" in e for e in q))
-        # second run: nothing left, and no sign-in attempted
-        client = mock.Mock()
-        self.assertEqual(up.run(5, "private", client_factory=client, uploader=uploader), 0)
+        client, one = self.run_main(lambda *a: "V3")   # second run: nothing left, no sign-in
         client.assert_not_called()
-        self.assertEqual(uploader.call_count, 2)
+        one.assert_not_called()
 
     def test_failure_recorded_and_next_continues(self):
         self.write([self.entry("a", 90), self.entry("b", 80)])
 
-        def uploader(yt, e, p):
+        def uploader(yt, e, p, c):
             if e["file"].endswith("/a"):
-                raise RuntimeError("boom")
+                raise FakeHttpError(400, b"invalidTitle")
             return "V2"
-        up.run(5, "private", client_factory=lambda: "yt", uploader=uploader)
+        self.run_main(uploader)
         q = self.queue()
-        self.assertEqual((q[0]["status"], q[0]["error"]), ("failed", "boom"))
+        self.assertEqual(q[0]["status"], "failed")
+        self.assertIn("invalidTitle", q[0]["error"])
         self.assertEqual((q[1]["status"], q[1]["video_id"]), ("uploaded", "V2"))
 
-    def test_quota_stops_and_keeps_rest_approved(self):
-        self.write([self.entry("a", 90), self.entry("b", 80)])
-        uploader = mock.Mock(side_effect=up.StopRun("quotaExceeded"))
-        up.run(5, "private", client_factory=lambda: "yt", uploader=uploader)
-        self.assertEqual(uploader.call_count, 1)
-        self.assertEqual([e["status"] for e in self.queue()], ["approved", "approved"])
+    def test_quota_and_offline_stop_and_keep_rest_approved(self):
+        for exc in (FakeHttpError(403, b'{"reason": "quotaExceeded"}'),
+                    ServerNotFoundError("Unable to find the server"),
+                    ConnectionError("network down")):
+            with self.subTest(exc=exc):
+                self.write([self.entry("a", 90), self.entry("b", 80)])
+                _, one = self.run_main(exc)
+                self.assertEqual(one.call_count, 1)
+                self.assertEqual([e["status"] for e in self.queue()], ["approved", "approved"])
+                up.QUEUE.unlink()
 
     def test_entries_added_during_upload_survive(self):
         self.write([self.entry("a", 90)])
         late = self.entry("late", 70)
 
-        def uploader(yt, e, p):   # make_clips appends while the upload runs
-            up.write_json(up.QUEUE, self.queue() + [late])
+        def uploader(yt, e, p, c):   # make_clips appends while the upload runs
+            up.QUEUE.write_text(json.dumps(self.queue() + [late]), encoding="utf-8")
             return "V1"
-        up.run(5, "private", client_factory=lambda: "yt", uploader=uploader)
+        self.run_main(uploader)
         self.assertEqual([e["status"] for e in self.queue()], ["uploaded", "approved"])
-
-    def test_sign_in_has_timeout(self):
-        with mock.patch.object(up, "TOKEN", self.tmp / "token.json"), \
-                mock.patch.object(up, "CLIENT_SECRET", Path(self.clip("client_secret.json"))), \
-                mock.patch("google_auth_oauthlib.flow.InstalledAppFlow.from_client_secrets_file") as flow, \
-                mock.patch("googleapiclient.discovery.build"):
-            flow.return_value.run_local_server.return_value.to_json.return_value = "{}"
-            up.youtube_client()
-        self.assertEqual(flow.return_value.run_local_server.call_args.kwargs["timeout_seconds"], 300)
 
     def test_max_uploads_respected(self):
         self.write([self.entry(n, s) for n, s in (("a", 1), ("b", 2), ("c", 3))])
-        uploader = mock.Mock(return_value="V")
-        up.run(2, "private", client_factory=lambda: "yt", uploader=uploader)
+        self.run_main(lambda *a: "V", "--max-uploads", "2")
         self.assertEqual([e["status"] for e in self.queue()], ["approved", "uploaded", "uploaded"])
 
     def test_dry_run_touches_nothing(self):
         self.write([self.entry("a", 90)])
-        client = mock.Mock()
-        self.assertEqual(up.run(5, "private", dry_run=True, client_factory=client), 0)
+        client, one = self.run_main(lambda *a: "V", "--dry-run")
         client.assert_not_called()
         self.assertEqual(self.queue()[0]["status"], "approved")
 
-    def test_empty_or_missing_queue(self):
-        client = mock.Mock()
-        self.assertEqual(up.run(5, "private", client_factory=client), 0)
-        client.assert_not_called()
+    def test_missing_file_marked_failed(self):
+        e = self.entry("a", 1)
+        Path(e["file"]).unlink()
+        self.write([e])
+        _, one = self.run_main(lambda *a: "V")
+        one.assert_not_called()
+        self.assertEqual(self.queue()[0]["status"], "failed")
+
+
+class SignIn(Base):
+    def test_browser_sign_in_has_timeout(self):
+        self.clip("client_secret.json")
+        with mock.patch("google_auth_oauthlib.flow.InstalledAppFlow.from_client_secrets_file") as flow, \
+                mock.patch("googleapiclient.discovery.build"), \
+                mock.patch.object(up.sys, "stdin", mock.Mock(isatty=lambda: True)):
+            flow.return_value.run_local_server.return_value.to_json.return_value = "{}"
+            up.get_youtube()
+        self.assertEqual(flow.return_value.run_local_server.call_args.kwargs["timeout_seconds"], 300)
+
+    def test_unattended_exits_instead_of_opening_browser(self):
+        self.clip("client_secret.json")
+        with mock.patch.object(up.sys, "stdin", None), self.assertRaises(SystemExit) as cm:
+            up.get_youtube()
+        self.assertEqual(cm.exception.code, 3)
 
 
 class RunDaily(unittest.TestCase):
     def opts(self, **kw):
         base = dict(topic='GTA 6', keywords="gta 6,gta vi", streams=2, clips=3, max_uploads=5,
-                    privacy="private", install="18:00", sources=None)
+                    privacy=None, install="18:00", sources=None)
         return SimpleNamespace(**{**base, **kw})
 
     def test_steps(self):
         make, upload = run_daily.step_commands(self.opts())
         self.assertEqual(Path(make[1]).name, "make_clips.py")
         self.assertIn("GTA 6", make)
-        self.assertEqual(upload[-4:], ["--max-uploads", "5", "--privacy", "private"])
+        self.assertEqual(upload[-2:], ["--max-uploads", "5"])   # upload.py picks the privacy
+        _, upload = run_daily.step_commands(self.opts(privacy="unlisted"))
+        self.assertEqual(upload[-2:], ["--privacy", "unlisted"])
 
     def test_sources_passed_through(self):
         make, _ = run_daily.step_commands(self.opts(sources="twitch"))
@@ -230,6 +202,7 @@ class RunDaily(unittest.TestCase):
         self.assertIn('"GTA 6 ' + "x" * 300 + '"', script)
         self.assertIn("100%% gta", script)              # % escaped for cmd
         self.assertIn("run_daily.py", script)
+        self.assertNotIn("--privacy", script)
         self.assertIn(f'>> "{run_daily.TASK_OUTPUT}" 2>&1', script)
         self.assertNotIn(str(run_daily.LOG), script)   # run.log stays writable by the scripts
 

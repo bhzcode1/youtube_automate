@@ -39,8 +39,9 @@ def step_commands(opts):
         make += ["--keywords", opts.keywords]
     if opts.sources:
         make += ["--sources", opts.sources]
-    upload =[py, str(HERE / "upload.py"), "--max-uploads", str(opts.max_uploads),
-              "--privacy", opts.privacy]
+    upload = [py, str(HERE / "upload.py"), "--max-uploads", str(opts.max_uploads)]
+    if opts.privacy:   # unset: upload.py picks (public via Upload-Post, private via own API)
+        upload += ["--privacy", opts.privacy]
     return make, upload
 
 
@@ -55,7 +56,9 @@ def task_script(opts):
     """Contents of the .cmd the task runs: the full command lives here, not in /TR."""
     args = [sys.executable, str(Path(__file__).resolve()), "--topic", opts.topic,
             "--streams", str(opts.streams), "--clips", str(opts.clips),
-            "--max-uploads", str(opts.max_uploads), "--privacy", opts.privacy]
+            "--max-uploads", str(opts.max_uploads)]
+    if opts.privacy:
+        args += ["--privacy", opts.privacy]
     if opts.keywords:
         args += ["--keywords", opts.keywords]
     if opts.sources:
@@ -85,7 +88,8 @@ def main(argv=None):
     ap.add_argument("--clips", type=int, default=3)
     ap.add_argument("--sources", help="only clip from these hosts, e.g. twitch,kick")
     ap.add_argument("--max-uploads", type=int, default=5)
-    ap.add_argument("--privacy", choices=["private", "unlisted", "public"], default="private")
+    ap.add_argument("--privacy", choices=["private", "unlisted", "public"],
+                    help="default: upload.py's (public via Upload-Post, private via own API)")
     ap.add_argument("--install", metavar="HH:MM", help="create the daily Windows scheduled task")
     ap.add_argument("--print", action="store_true", help="with --install: only show the command")
     opts = ap.parse_args(argv)
