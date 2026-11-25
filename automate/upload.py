@@ -201,8 +201,12 @@ def read_text(path):
 
 
 def find_youtube_result(obj):
-    """Search Upload-Post's JSON for the YouTube result, wherever it sits."""
+    """Search Upload-Post's JSON for the YouTube result, wherever it sits.
+    Status replies look like {"results": [{"platform": "youtube", "success": true,
+    "platform_post_id": "...", "post_url": "..."}]}; older ones use a "youtube" key."""
     if isinstance(obj, dict):
+        if obj.get("platform") == "youtube":
+            return obj
         yt = obj.get("youtube")
         if isinstance(yt, dict):
             return yt
@@ -263,10 +267,12 @@ def upload_via_uploadpost(entry, privacy, category, key, profile):
     # wait for YouTube to finish (async upload), up to ~15 minutes
     for attempt in range(60):
         yt = find_youtube_result(j)
-        if yt is not None and "success" in yt:
-            if not yt.get("success"):
-                raise RuntimeError(f"YouTube via Upload-Post: {yt.get('error') or yt}")
-            vid = yt.get("video_id") or yt.get("post_id") or yt.get("url") or "ok"
+        if yt is not None and yt.get("success") is not None:   # None = still processing
+            if not yt["success"]:
+                raise RuntimeError("YouTube via Upload-Post: "
+                                   f"{yt.get('error_message') or yt.get('error') or yt}")
+            vid = (yt.get("platform_post_id") or yt.get("video_id") or yt.get("post_id")
+                   or yt.get("post_url") or yt.get("url") or "ok")
             return vid, rid
         status = str(j.get("status", "")).lower()
         if status in ("failed", "error"):

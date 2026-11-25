@@ -167,6 +167,31 @@ class UploadPost(Base):
             self.assertEqual(up.upload_via_uploadpost(self.entry("a", 1), "public", "24", "k", "p"),
                              ("VID", "r1"))
 
+    def test_real_status_reply_gives_video_id(self):
+        # shape of a real Upload-Post status reply (2026-11-25), first still processing
+        accepted = mock.Mock(status_code=200, json=lambda: {"success": True, "request_id": "r1"})
+        pending = mock.Mock(json=lambda: {"status": "in_progress", "results": [
+            {"platform": "youtube", "success": None}]})
+        done = mock.Mock(json=lambda: {"status": "completed", "results": [
+            {"platform": "youtube", "success": True, "platform_post_id": "FnKJ0LcVyNs",
+             "post_url": "https://www.youtube.com/watch?v=FnKJ0LcVyNs", "error_message": None}]})
+        with mock.patch("requests.post", return_value=accepted), \
+                mock.patch("requests.get", side_effect=[pending, done]) as get, \
+                mock.patch.object(up.time, "sleep"):
+            self.assertEqual(up.upload_via_uploadpost(self.entry("a", 1), "public", "24", "k", "p"),
+                             ("FnKJ0LcVyNs", "r1"))
+        self.assertEqual(get.call_count, 2)   # stops as soon as YouTube confirms
+
+    def test_real_status_reply_failure_raises(self):
+        accepted = mock.Mock(status_code=200, json=lambda: {"success": True, "request_id": "r1"})
+        failed = mock.Mock(json=lambda: {"status": "completed", "results": [
+            {"platform": "youtube", "success": False, "error_message": "video too long"}]})
+        with mock.patch("requests.post", return_value=accepted), \
+                mock.patch("requests.get", return_value=failed), \
+                mock.patch.object(up.time, "sleep"), \
+                self.assertRaisesRegex(RuntimeError, "video too long"):
+            up.upload_via_uploadpost(self.entry("a", 1), "public", "24", "k", "p")
+
     def test_ai_title_failure_does_not_block_the_queue(self):
         up.UP_KEY.write_text("key", encoding="utf-8")   # -> Upload-Post path
         added = {**self.entry("added", 1000), "yt_title": ""}
