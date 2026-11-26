@@ -308,7 +308,7 @@ def retry_later(line):
 
 
 def make_clips(sc, urls, topic, keywords, clips, model, language, section=None, repick=False,
-               cookies=None):
+               cookies=None, min_len=None, max_len=None):
     """language: what the creators speak. Non-English speech gets English captions.
     Returns (folders, blocked): only folders whose clips.json was written by THIS run (a
     folder can hold an older clips.json when this run made nothing), and whether a
@@ -322,6 +322,10 @@ def make_clips(sc, urls, topic, keywords, clips, model, language, section=None, 
         cmd += ["--repick"]
     if cookies:
         cmd += ["--cookies", cookies]
+    if min_len:
+        cmd += ["--min", str(min_len)]
+    if max_len:
+        cmd += ["--max", str(max_len)]
     if keywords:
         cmd += ["--keywords", keywords]
     env = child_env()
@@ -467,6 +471,9 @@ def main():
                     help="skip find/clip; review the clips in these stream-clips output folders")
     ap.add_argument("--repick", action="store_true",
                     help="pick moments again instead of reusing cached picks")
+    ap.add_argument("--min", dest="min_len", type=int, help="shortest clip in seconds (default 15)")
+    ap.add_argument("--max", dest="max_len", type=int,
+                    help="longest clip in seconds (default 59, the Shorts limit is 60)")
     ap.add_argument("--min-score", type=int,
                     help=f"set min_score exactly (default: raise it to {MIN_SCORE})")
     opts = ap.parse_args()
@@ -510,7 +517,8 @@ def main():
     for lang in sorted(set(langs.values())):   # one streamclips run per spoken language
         group = [u for u in urls if langs[u] == lang]
         made, failed = make_clips(sc, group, opts.topic, opts.keywords, opts.clips, opts.model,
-                                  lang, opts.section, opts.repick, opts.cookies)
+                                  lang, opts.section, opts.repick, opts.cookies,
+                                  opts.min_len, opts.max_len)
         folders, blocked = folders + made, blocked or failed
     rejected = read_json(REJECTED, [])
 

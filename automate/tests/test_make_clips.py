@@ -248,6 +248,16 @@ class MakeClipsQuality(TempFiles):
         env = popen.call_args.kwargs["env"]
         self.assertEqual(json.loads(env["SC_SETTINGS"])["video_height"], 2160)
         self.assertEqual(env["SC_CAPTION_TASK"], "translate")
+        self.assertNotIn("--min", popen.call_args.args[0])   # skill defaults unless asked
+
+    def test_clip_length_passed_through(self):
+        proc = mock.Mock(stdout=iter([]), returncode=0)
+        with mock.patch.object(mc.subprocess, "Popen", return_value=proc) as popen:
+            mc.make_clips(Path("sc/streamclips.py"), ["https://youtu.be/x"], "t", None, 1,
+                          "m", "en", min_len=38, max_len=42)
+        cmd = popen.call_args.args[0]
+        self.assertEqual(cmd[cmd.index("--min") + 1], "38")
+        self.assertEqual(cmd[cmd.index("--max") + 1], "42")
 
 
 class SpeechLanguages(TempFiles):
