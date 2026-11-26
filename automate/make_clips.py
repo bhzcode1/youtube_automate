@@ -289,11 +289,25 @@ def speech_languages(streams, model):
 
 # ---------------------------------------------------------------- 3. clip
 
+# stream-clips' own "fix it and run again" failures (login, bot check, network, cookies):
+# the stream is fine, so it must not be recorded as "no clips made" and skipped forever.
+RETRY_LATER = ("yt-dlp failed", "needs a login", "not a bot", "blocked the download",
+               "subscriber-only")
+
+
+def retry_later(line):
+    """True for a stream-clips failure line ("[mm:ss] x ...") that a later run can fix.
+    Warnings ("!"), e.g. a skipped chat replay, don't count."""
+    return (re.match(r"^\[[\d:]+\] x ", line) is not None
+            and any(m in line.lower() for m in RETRY_LATER))
+
+
 def make_clips(sc, urls, topic, keywords, clips, model, language, section=None, repick=False,
                cookies=None):
     """language: what the creators speak. Non-English speech gets English captions.
-    Returns only folders whose clips.json was written by THIS run (a folder can hold an
-    older clips.json when this run made nothing)."""
+    Returns (folders, blocked): only folders whose clips.json was written by THIS run (a
+    folder can hold an older clips.json when this run made nothing), and whether a
+    download/login problem stopped something (see retry_later)."""
     cmd = [str(VENV_PY), str(RUNNER), str(sc.parent), "clip", *urls, "--topic", topic,
            "--clips", str(clips), "--brain", "claude", "--model", model, "--language", language,
            "--focus", FOCUS]
@@ -310,7 +324,7 @@ def make_clips(sc, urls, topic, keywords, clips, model, language, section=None, 
         env["SC_SCAN_TASK"] = env["SC_CAPTION_TASK"] = "translate"
     log(f"running: streamclips clip ({language}"
         + (" -> English captions" if language != "en" else "") + ") " + " ".join(urls))
-    folders = []
+    folders, blocked = [], False
     started = time.time() - 1
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
                             encoding="utf-8", errors="replace", env=env)
@@ -322,13 +336,14 @@ def make_clips(sc, urls, topic, keywords, clips, model, language, section=None, 
             m = re.match(r"^\s*folder:\s*(.+?)\s*$", line)
             if m:
                 folders.append(Path(m.group(1)))
+            blocked = blocked or retry_later(line)
             if time.time() > deadline:
                 proc.kill()
                 log("streamclips clip timed out")
                 break
     proc.wait()
     log(f"streamclips clip exited with {proc.returncode}")
-    return fresh_folders(folders, started)
+    return fresh_folders(folders, started), blocked
 
 
 def fresh_folders(folders, since):
@@ -485,17 +500,23 @@ def main():
     for s in chosen:
         log(f"chosen: {s['url']} ({s.get('name') or '?'}, speaks {langs[s['url']]})")
 
-    folders = []
+    folders, blocked = [], False
     for lang in sorted(set(langs.values())):   # one streamclips run per spoken language
         group = [u for u in urls if langs[u] == lang]
-        folders += make_clips(sc, group, opts.topic, opts.keywords, opts.clips, opts.model, lang,
-                              opts.section, opts.repick, opts.cookies)
+        made, failed = make_clips(sc, group, opts.topic, opts.keywords, opts.clips, opts.model,
+                                  lang, opts.section, opts.repick, opts.cookies)
+        folders, blocked = folders + made, blocked or failed
     rejected = read_json(REJECTED, [])
 
     # Streams that gave no clips are recorded too, so the next run doesn't redo them.
+    # shortcut: one download/login failure keeps EVERY clip-less stream of this run retryable
+    # (the failure lines don't always name the URL); a re-run reuses the cached transcripts.
+    if blocked:
+        log("download or login problem (see above); clip-less streams stay open for a retry. "
+            "If YouTube wants a login, save automate/cookies.txt (see README).")
     produced = {(read_json(f / "clips.json", {}).get("source") or {}).get("url") for f in folders}
     for u in urls:
-        if u not in produced and not opts.section:   # a partial run says nothing about the rest
+        if u not in produced and not opts.section and not blocked:   # partial run: says nothing
             rejected.append({"source_url": u, "reason": "no clips made",
                              "added": datetime.datetime.now().isoformat(timespec="seconds")})
             log(f"no clips from {u}; it will be skipped next time")

@@ -67,6 +67,32 @@ Logs: `automate/run.log`. A scheduled run's console output: `automate/task_outpu
 On the free Upload-Post plan use `--max-uploads 1` with the daily task; when the monthly limit
 is reached the run stops and the rest stay approved for later.
 
+## Finding specific creators (e.g. Indian streamers)
+
+The search only finds the most-viewed "<topic> stream" videos. To include particular creators,
+list them in `~/StreamClips/watchlist.txt`; each one's newest matching video from the last 48
+hours becomes a candidate:
+
+```
+youtube:@MYTHPAT | gta 6
+twitch:kaicenat | gta 6
+```
+
+Put their spoken language in `automate/creators.json` (`"Mythpat": "hi"`) so the captions
+are translated to English without a guess.
+
+## When YouTube blocks a download
+
+"Needs a login", "not a bot" or "age-restricted": export your YouTube cookies (Netscape
+format, e.g. with the "Get cookies.txt LOCALLY" extension) to `automate/cookies.txt`.
+`make_clips.py` uses it automatically. `--cookies chrome` usually fails on Windows, because
+Chrome locks and encrypts its cookies. Such a stream is not marked as done, so the next
+run retries it and reuses the saved transcript. The cookies file is your login: it is in
+`.gitignore`, never share it.
+
+Long streams take about 15 minutes per stream hour to transcribe; `--section 0:00:00-1:00:00`
+on `make_clips.py` limits a run to one part.
+
 ## Tests
 
 ```bash

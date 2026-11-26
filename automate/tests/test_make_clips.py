@@ -216,6 +216,29 @@ class FreshFolders(TempFiles):
         self.assertEqual(mc.fresh_folders([old, new, empty], since=2000), [new])
 
 
+class RetryLater(unittest.TestCase):
+    """Real stream-clips lines from 2026-11-26 (Live Insaan runs)."""
+
+    def test_download_and_login_failures_are_retryable(self):
+        for line in (
+                "[01:15] x Live Insaan: https://www.youtube.com/watch?v=jR_nyfGVcpc: yt-dlp failed: "
+                "ERROR: [youtube] jR_nyfGVcpc: Unable to download API page: ... getaddrinfo failed",
+                "[55:50] x Live Insaan: clip 1 failed: YouTube needs a login for this video "
+                "(age-restricted). Run again with --cookies chrome",
+                "[00:58] x Live Insaan: clip 1 failed: yt-dlp failed: ERROR: Could not copy Chrome "
+                "cookie database.",
+                "[00:05] x Live Insaan: clip 1 failed: yt-dlp failed: ERROR: Failed to decrypt with DPAPI."):
+            self.assertTrue(mc.retry_later(line), line)
+
+    def test_warnings_and_real_no_clip_results_are_not(self):
+        for line in (
+                "[50:55] ! Live Insaan: chat replay skipped (yt-dlp failed: ERROR: [youtube] "
+                "jR_nyfGVcpc: Sign in to confirm you're not a bot)",
+                "[10:00] x Live Insaan: https://youtu.be/x: the AI found nothing strong enough to clip",
+                "[00:41] > Live Insaan: listening to 81 min of audio"):
+            self.assertFalse(mc.retry_later(line), line)
+
+
 class SpeechLanguages(TempFiles):
     def test_known_creator_case_insensitive_no_claude(self):
         mc.write_json(mc.CREATORS, {"Techno Gamerz": "hi"})
