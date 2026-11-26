@@ -239,6 +239,17 @@ class RetryLater(unittest.TestCase):
             self.assertFalse(mc.retry_later(line), line)
 
 
+class MakeClipsQuality(TempFiles):
+    def test_quality_settings_reach_stream_clips(self):
+        proc = mock.Mock(stdout=iter([]), returncode=0)
+        with mock.patch.object(mc.subprocess, "Popen", return_value=proc) as popen:
+            mc.make_clips(Path("sc/streamclips.py"), ["https://youtu.be/x"], "t", None, 1,
+                          "m", "hi")
+        env = popen.call_args.kwargs["env"]
+        self.assertEqual(json.loads(env["SC_SETTINGS"])["video_height"], 2160)
+        self.assertEqual(env["SC_CAPTION_TASK"], "translate")
+
+
 class SpeechLanguages(TempFiles):
     def test_known_creator_case_insensitive_no_claude(self):
         mc.write_json(mc.CREATORS, {"Techno Gamerz": "hi"})

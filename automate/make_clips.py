@@ -44,6 +44,11 @@ SETTINGS = DATA / "settings.json"
 # of the finished clip is the real quality gate.
 MIN_SCORE = 50
 MIN_SYNC = 0.5
+# Clip quality, merged over ~/StreamClips/settings.json for our runs only (via sc_runner).
+# The facecam is a small box of the stream, enlarged ~2.5x into the top panel: a 1080p source
+# makes it blurry. Downloading up to 4K (falls back to 1440p/1080p) keeps it sharp. The output
+# stays 1080x1920 (Shorts' size; caption sizes are set for it).
+QUALITY = {"video_height": 2160, "crf": 16, "x264_preset": "slow"}
 YT_TITLE_MAX = 100
 CLAUDE_TIMEOUT = 600
 CLIP_TIMEOUT = 6 * 3600
@@ -320,6 +325,7 @@ def make_clips(sc, urls, topic, keywords, clips, model, language, section=None, 
     if keywords:
         cmd += ["--keywords", keywords]
     env = child_env()
+    env["SC_SETTINGS"] = json.dumps(QUALITY)
     if language != "en":   # Whisper translates the speech to English
         env["SC_SCAN_TASK"] = env["SC_CAPTION_TASK"] = "translate"
     log(f"running: streamclips clip ({language}"
